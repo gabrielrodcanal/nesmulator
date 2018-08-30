@@ -1,0 +1,5 @@
+dist/
+nbproject/
+nestest.nes
+build/
+.dep.inc
