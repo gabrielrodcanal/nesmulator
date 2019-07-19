@@ -3,3 +3,5 @@ nbproject/
 nestest.nes
 build/
 .dep.inc
+cpu/6502cpu
+tilesVisualizer/tilesVisualizer

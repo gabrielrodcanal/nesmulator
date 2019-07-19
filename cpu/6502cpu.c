@@ -82,7 +82,7 @@ int main() {
 
 int initialisation() {
     FILE * rom;
-    if((rom = fopen("nestest.nes","r")) == NULL)
+    if((rom = fopen("../resources/nestest.nes","r")) == NULL)
         return -1;
     fseek(rom,0,SEEK_END);
     int size = 16 * 1024;
