@@ -2,17 +2,18 @@
 #include <stdio.h>
 #include <SDL2/SDL.h>
 #include "ppuregs.h"
+#include <unistd.h>
 
 #define WINDOW_WIDTH 600
 
 #define MAGNIFY 2
 
 struct Tile {
-        unsigned char pixel[64][4];   //color of every pixel
+    unsigned char pixel[64][4];   //color of every pixel
 };
 
 struct Palette {
-        unsigned char col[4][4];
+    unsigned char col[4][4];
 };
 
 unsigned char ppummap[0x4000];
@@ -94,9 +95,12 @@ int main(void) {
     }
     
     SDL_RenderPresent(renderer);
-    while (1) {
-        if (SDL_PollEvent(&event) && event.type == SDL_QUIT)
+    
+    while (SDL_WaitEvent(&event)) {
+        if (event.type == SDL_QUIT) {
             break;
+        }
+        SDL_Delay(50);
     }
     //fclose(ppulog);
     //fclose(cpulog);
@@ -118,7 +122,7 @@ void drawPixel(int pixel, struct Tile tile, SDL_Renderer * renderer, int x, int 
 
 
 void drawScanline(char scanline, struct Palette palbg, SDL_Renderer * renderer) {
-    printf("PPUCTRL: %X\n", *PPUCTRL);
+    //printf("PPUCTRL: %X\n", *PPUCTRL);
 
     unsigned short colour;
     
@@ -197,19 +201,40 @@ void drawSprite(int sprite, SDL_Renderer * renderer, struct Palette palsb, unsig
     struct Tile spr;
     
     //Tile generation
-    for(int pix = 0; pix < 64; pix++) {
-        fillTile(&spr, oam[ind+1], palsb, pattable);
-    }
+    fillTile(&spr, oam[ind+1], palsb, pattable);
     
     //printf("spr.pixel[0][0]: %X\n", spr.pixel[0][0]);
     unsigned char row = 0;
-    for(int pixel = 0; pixel < 64; pixel++) {
-        if(pixel % 8 == 0 && (pixel > 0))
-            row++;
-        for(int x = x_pos * MAGNIFY + MAGNIFY*(pixel % 8); x < x_pos * MAGNIFY + MAGNIFY + MAGNIFY*(pixel % 8); x++) {
-            for(int y = MAGNIFY * y_pos + MAGNIFY*row; y < MAGNIFY * y_pos + MAGNIFY + MAGNIFY*row; y++) {
-                //printf("X: %d, Y: %d\n", x, y);
-                drawPixel(pixel,spr,renderer,x,y);
+    unsigned char flipH = (oam[ind + 2] & 0x40) >> 6;
+    unsigned char flipV = (oam[ind + 2] & 0x80) >> 7;
+
+    int r = 0;  // used to flip pixel
+    int curr_pix;   // current pixel to draw
+    if(flipH) {
+        for(int pixel = 0; pixel < 64; pixel++) {
+            if(pixel % 8 == 0 && (pixel > 0)) {
+                row++;
+                r = 0;
+            }
+            for(int x = x_pos * MAGNIFY + MAGNIFY*(pixel % 8); x < x_pos * MAGNIFY + MAGNIFY + MAGNIFY*(pixel % 8); x++) {
+                for(int y = MAGNIFY * y_pos + MAGNIFY*row; y < MAGNIFY * y_pos + MAGNIFY + MAGNIFY*row; y++) {
+                    //printf("X: %d, Y: %d\n", x, y);
+                    curr_pix = row*8 + (7-r);
+                    drawPixel(curr_pix,spr,renderer,x,y);
+                }
+            }
+            r++;
+        }
+    }
+    else {
+        for(int pixel = 0; pixel < 64; pixel++) {
+            if(pixel % 8 == 0 && (pixel > 0))
+                row++;
+            for(int x = x_pos * MAGNIFY + MAGNIFY*(pixel % 8); x < x_pos * MAGNIFY + MAGNIFY + MAGNIFY*(pixel % 8); x++) {
+                for(int y = MAGNIFY * y_pos + MAGNIFY*row; y < MAGNIFY * y_pos + MAGNIFY + MAGNIFY*row; y++) {
+                    //printf("X: %d, Y: %d\n", x, y);
+                    drawPixel(pixel,spr,renderer,x,y);
+                }
             }
         }
     }
