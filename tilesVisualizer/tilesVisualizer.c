@@ -208,6 +208,21 @@ void drawSprite(int sprite, SDL_Renderer * renderer, struct Palette palsb, unsig
     unsigned char flipH = (oam[ind + 2] & 0x40) >> 6;
     unsigned char flipV = (oam[ind + 2] & 0x80) >> 7;
 
+    
+    if(flipV) { // then 'fix' tile
+        unsigned char copy;
+        int row = 0;
+        int flip_ind; // index of the pixel to be flipped
+        for(int i = 0; i < 32; i++) {
+            if(i % 8 == 0 && i > 0)
+                row += 1;
+            copy = spr.pixel[i];
+            flip_ind = 8 * (7-row) + i;
+            memcpy(&spr.pixel[i], &spr.pixel[flip_ind], 4 * sizeof(unsigned char));
+            memcpy(&spr.pixel[flip_ind], &copy, 4 * sizeof(unsigned char));
+        }
+    }
+
     int r = 0;  // used to flip pixel
     int curr_pix;   // current pixel to draw
     if(flipH) {
