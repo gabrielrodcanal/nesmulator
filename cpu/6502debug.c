@@ -118,5 +118,5 @@ void printInstr() {
     ppu_x = (cycle-7) * 3 % 341;
     if(prev_ppu_x > ppu_x)
         ppu_y = (ppu_y + 1) % 262;
-    printf("A:%02X X:%02X Y:%02X P:%02X SP:%02X PPU:%3d,%3d CYC:%d\n", A, X, Y, P, S, ppu_x, ppu_y, cycle);
+    printf("A:%02X X:%02X Y:%02X P:%02X SP:%04X PPU:%3d,%3d CYC:%d\n", A, X, Y, P, S, ppu_x, ppu_y, cycle);
 }

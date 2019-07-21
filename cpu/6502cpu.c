@@ -17,6 +17,7 @@
 
 #define DEBUG_MODE
 
+#include "../mappers/mapper0.h"
 #include "components.h"
 #include <stdio.h>
 
@@ -82,13 +83,8 @@ int main() {
 }
 
 int initialisation() {
-    FILE * rom;
-    if((rom = fopen("../../resources/roms/nestest.nes","r")) == NULL)
-        return -1;
-    fseek(rom,0,SEEK_END);
-    int size = 16 * 1024;
-    fseek(rom,16,SEEK_SET);
-    fread(memory+0xC000,size,1,rom);
+    initCartridge("../../resources/roms/nestest.nes");
+    mapCPUMemory(memory);
     
     PC = 0xC000;    // for nestest (temporary)
     //PC = memory[0xFFFD] << 8 | memory[0xFFFC];  // reset vector
