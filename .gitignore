@@ -5,3 +5,5 @@ build/
 .dep.inc
 cpu/6502cpu
 tilesVisualizer/tilesVisualizer
+settings.json
+my_nestest.log

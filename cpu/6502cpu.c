@@ -15,6 +15,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#define DEBUG_MODE
+
 #include "components.h"
 #include <stdio.h>
 
@@ -74,7 +76,6 @@ unsigned short PC;
 
 boolean fetched_in_adv = FALSE;
 boolean execution = TRUE;
-#define DEBUG_MODE TRUE
 
 int main() {
     initialisation();
@@ -82,14 +83,16 @@ int main() {
 
 int initialisation() {
     FILE * rom;
-    if((rom = fopen("../resources/nestest.nes","r")) == NULL)
+    if((rom = fopen("../../resources/roms/nestest.nes","r")) == NULL)
         return -1;
     fseek(rom,0,SEEK_END);
     int size = 16 * 1024;
     fseek(rom,16,SEEK_SET);
     fread(memory+0xC000,size,1,rom);
     
-    PC = 0xC000;
+    PC = 0xC000;    // for nestest (temporary)
+    //PC = memory[0xFFFD] << 8 | memory[0xFFFC];  // reset vector
+    //printf("PC: %x\n", PC);
     S = 0xFD;
     A = X = Y = 0x0;
     P = 0x24;
@@ -98,6 +101,8 @@ int initialisation() {
     memory[0x100 + 0xFE] = 0xFE;
     memory[0x100 + 0xFF] = 0x0B;
     memory[0xBFF] = 0x02;
+
+    cycle = 7;
     
     while(execution) {
         if(fetched_in_adv == FALSE)
@@ -148,7 +153,7 @@ void inline set_read_flags(char * reg) {
 
 void inline fetch() {
     opcode = memory[PC];
-#if DEBUG_MODE
+#ifdef DEBUG_MODE
     printInstr();
 #endif
     PC++;
@@ -521,7 +526,7 @@ void inline rel_addr(boolean cond_met) {
         }
     }
     else {
-#if DEBUG_MODE
+#ifdef DEBUG_MODE
         printInstr();
 #endif
         PC ++;

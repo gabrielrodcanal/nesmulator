@@ -19,7 +19,9 @@
 #include "components.h"
 #include <stdio.h>
 
-void printInstr() {    
+void printInstr() {  
+    static unsigned short ppu_x, ppu_y;
+
     printf("%04X  %02X ", PC, opcode);
     char nops;
     
@@ -112,7 +114,9 @@ void printInstr() {
     else
         printf("                            ");
     
-    
-    unsigned short cyc = cycle * 3 % 341;
-    printf("A:%02X X:%02X Y:%02X P:%02X SP:%02X CYC:%3d\n", A, X, Y, P, S, cyc);
+    unsigned char prev_ppu_x = ppu_x;
+    ppu_x = (cycle-7) * 3 % 341;
+    if(prev_ppu_x > ppu_x)
+        ppu_y = (ppu_y + 1) % 262;
+    printf("A:%02X X:%02X Y:%02X P:%02X SP:%02X PPU:%3d,%3d CYC:%d\n", A, X, Y, P, S, ppu_x, ppu_y, cycle);
 }
