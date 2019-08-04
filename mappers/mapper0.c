@@ -27,6 +27,7 @@ void initCartridge(char *filename) {
 }
 
 void mapCPUMemory(unsigned char *cpummap) {
+    memcpy(cpummap + 0x8000, cartridge, 16 * prg_rom16kB * 1024);
     memcpy(cpummap + 0xC000, cartridge, 16 * prg_rom16kB * 1024);
 }
 

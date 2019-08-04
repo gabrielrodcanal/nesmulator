@@ -83,6 +83,7 @@ int main() {
 }
 
 int initialisation() {
+    //initCartridge("../../resources/roms/donkey_kong.nes");
     initCartridge("../../resources/roms/nestest.nes");
     mapCPUMemory(memory);
     

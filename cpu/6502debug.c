@@ -18,9 +18,11 @@
 #include "6502debug.h"
 #include "components.h"
 #include <stdio.h>
+#include <stdlib.h>
 
 void printInstr() {  
     static unsigned short ppu_x, ppu_y;
+    char * str = (char *)malloc(50 * sizeof(char));
 
     printf("%04X  %02X ", PC, opcode);
     char nops;
@@ -49,28 +51,42 @@ void printInstr() {
     
     switch(nops) {
         case 0:
-            printf("       ");
+            if(unoff_op[opcode])
+                printf("      *");
+            else
+                printf("       ");
             break;
         case 1:
-            printf("%02X     ", memory[PC+1]);
+            if(unoff_op[opcode])
+                printf("%02X    *", memory[PC+1]);
+            else
+                printf("%02X     ", memory[PC+1]);
             break;
         case 2:
-            printf("%02X %02X  ", memory[PC+1], memory[PC+2]);
+            if(unoff_op[opcode])
+                printf("%02X %02X *", memory[PC+1], memory[PC+2]);
+            else
+                printf("%02X %02X  ", memory[PC+1], memory[PC+2]);
             break;
     }
-   
-    printf("%s ", op_name[opcode]);
     
+    printf("%s ", op_name[opcode]);
+
     if(nops > 0) {
         unsigned char zero_addr;
         unsigned short abs_addr;
         unsigned short point_addr;
+        unsigned char pcl, point_low, point_high, old_pcl;
+        unsigned short pch;
+        signed char offset;
+        
         switch(addr_mode[opcode]) {
             case 0:
                 printf("#$%02X                        ", memory[PC+1]);
                 break;
             case 1:
-                printf("$%02X                         ", memory[PC+1]);
+                sprintf(str, "$%02X = %02X", memory[PC+1], memory[memory[PC+1]]);
+                printf("%-28s", str);
                 break;
             case 2:
                 zero_addr = X + memory[PC+1];
@@ -89,7 +105,15 @@ void printInstr() {
                 printf("$%04X,Y @ %04X = %02X         ", abs_addr, (abs_addr + Y) % 0x10000, memory[(abs_addr + Y) % 0x10000]);
                 break;
             case 7:
-                printf("$%04X                       ", PC + memory[PC+1] + 2);
+                offset = memory[PC+1];
+                pch = (PC+2) & 0xFF00;
+                pcl = (PC+2) & 0x00FF;
+                old_pcl = pcl;
+                pcl += offset;
+                if(0xFF - old_pcl < offset) 
+                    printf("$%04X                       ", (pch + 0x100 | pcl) % 0x10000);
+                else
+                    printf("$%04X                       ", (pch | pcl) % 0x10000);
                 break;
             case 9:
                 zero_addr = (memory[PC+1] + X) % 256;
@@ -103,20 +127,51 @@ void printInstr() {
                         memory[(point_addr + Y) % 0x10000]);
                 break;
             case 11:
-                printf("($%04X)", memory[PC+2] << 8 | memory[PC+1]);
+                abs_addr = memory[PC+2] << 8 | memory[PC+1];
+                point_low = memory[PC+1];
+                point_high = memory[PC+2];
+                pcl = memory[(point_high << 8) | point_low];
+                sprintf(str, "($%04X) = %04X", abs_addr, memory[((point_high << 8) | (point_low + 1) % 256) % 0x10000] << 8 | pcl);
+                printf("%-28s", str);
+                break;
+            case 4:
+                abs_addr = memory[PC+2] << 8 | memory[PC+1];
+                switch(opcode) {
+                    case 0x4C:
+                    case 0x20:
+                        printf("$%04X                       ", memory[PC+2] << 8 | memory[PC+1]);
+                        break;
+                    default:
+                        sprintf(str, "$%04X = %02X", abs_addr, memory[abs_addr]);
+                        printf("%-28s", str);
+                        break;
+                }
                 break;
             default:
+                abs_addr = memory[PC+2] << 8 | memory[PC+1];
                 printf("$%04X                       ", memory[PC+2] << 8 | memory[PC+1]);
                 break;
         }
     }
     
-    else
-        printf("                            ");
+    else  {
+        switch(opcode) {
+            case 0x0A:
+            case 0x6A:
+            case 0x2A:
+            case 0x4A:
+                sprintf(str, "A");
+                printf("%-28s", str);
+                break;
+            default:
+                printf("                            ");
+                break;
+        }
+    }
     
     unsigned char prev_ppu_x = ppu_x;
     ppu_x = (cycle-7) * 3 % 341;
     if(prev_ppu_x > ppu_x)
         ppu_y = (ppu_y + 1) % 262;
-    printf("A:%02X X:%02X Y:%02X P:%02X SP:%04X PPU:%3d,%3d CYC:%d\n", A, X, Y, P, S, ppu_x, ppu_y, cycle);
+    printf("A:%02X X:%02X Y:%02X P:%02X SP:%02X PPU:%3d,%3d CYC:%d\n", A, X, Y, P, S, ppu_x, ppu_y, cycle);
 }
