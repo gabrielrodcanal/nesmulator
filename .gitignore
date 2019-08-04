@@ -9,3 +9,4 @@ settings.json
 my_nestest.log
 ppu/
 launch.json
+.my_nestest.log.swp

@@ -83,12 +83,12 @@ int main() {
 }
 
 int initialisation() {
-    //initCartridge("../../resources/roms/donkey_kong.nes");
-    initCartridge("../../resources/roms/nestest.nes");
+    initCartridge("../../resources/roms/donkey_kong.nes");
+    //initCartridge("../../resources/roms/nestest.nes");
     mapCPUMemory(memory);
     
-    PC = 0xC000;    // for nestest (temporary)
-    //PC = memory[0xFFFD] << 8 | memory[0xFFFC];  // reset vector
+    //PC = 0xC000;    // for nestest (temporary)
+    PC = memory[0xFFFD] << 8 | memory[0xFFFC];  // reset vector
     //printf("PC: %x\n", PC);
     S = 0xFD;
     A = X = Y = 0x0;
@@ -101,9 +101,13 @@ int initialisation() {
 
     cycle = 7;
     
+    // Donkey Kong
+    memory[0x2002] = 0x80;
+
     while(execution) {
         if(fetched_in_adv == FALSE)
             fetch();
+        fetched_in_adv = FALSE;
         decode();
     }
     return 0;
@@ -155,7 +159,6 @@ void inline fetch() {
 #endif
     PC++;
     cycle++;
-    fetched_in_adv = FALSE;
 }
 
 void inline brk() {
