@@ -4,7 +4,7 @@
 #include <string.h>
 
 unsigned char *cartridge;
-unsigned char prg_rom8kB;
+unsigned char chr_rom8kB;
 unsigned char prg_rom16kB;
 unsigned int cartridge_size;
 
@@ -18,8 +18,8 @@ void initCartridge(char *filename) {
         printf("Unsupported file format\n");
 
     prg_rom16kB = header[4];
-    prg_rom8kB = header[5];
-    cartridge_size = 16 * prg_rom16kB * 1024 + 8 * prg_rom8kB * 1024;
+    chr_rom8kB = header[5];
+    cartridge_size = 16 * prg_rom16kB * 1024 + 8 * chr_rom8kB * 1024;
     cartridge = (unsigned char*)malloc(sizeof(unsigned char) * (cartridge_size));
     fseek(f_cartridge, HEADER_SIZE_b, SEEK_SET);
     if((fread(cartridge, cartridge_size, 1, f_cartridge) == 0))

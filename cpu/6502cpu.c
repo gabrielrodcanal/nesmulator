@@ -19,7 +19,10 @@
 
 #include "../mappers/mapper0.h"
 #include "components.h"
+#include "cpu_ppu_interface.h"
 #include <stdio.h>
+#include "../ppu/ppu_components.h"
+#include "../ppu/ppuregs.h"
 
 int initialisation();
 static void inline set_bit(char bit, char * src);
@@ -71,6 +74,134 @@ static void inline rla();
 static void inline stp();
 static void inline anc();
 
+// Functions for memory/IO buses treatment
+static void inline write_acum(unsigned short addr, unsigned char *reg);
+static void inline write_acum_2007(unsigned short addr, unsigned char *reg);
+static void inline write_acum_2006(unsigned short addr, unsigned char *reg);
+static void inline write_acum_4014(unsigned short addr, unsigned char *reg);
+static void inline rot_right(unsigned short addr);
+static void inline rot_right_2006(unsigned short addr);
+static void inline rot_right_2007(unsigned short addr);
+static void inline rot_right_4014(unsigned short addr);
+static void inline rot_left(unsigned short addr);
+static void inline rot_left_2006(unsigned short addr);
+static void inline rot_left_2007(unsigned short addr);
+static void inline rot_left_4014(unsigned short addr);
+static void inline inc_mem(unsigned short addr);
+static void inline inc_mem_2006(unsigned short addr);
+static void inline inc_mem_2007(unsigned short addr);
+static void inline inc_mem_4014(unsigned short addr);
+static void inline dec_mem(unsigned short addr);
+static void inline dec_mem_2006(unsigned short addr);
+static void inline dec_mem_2007(unsigned short addr);
+static void inline dec_mem_4014(unsigned short addr);
+static void inline ppu_2006();
+static void inline ppu_2007();
+
+unsigned char prev_2006;
+unsigned char prev_2007;
+unsigned char prev_4014;
+
+unsigned char break_flag;
+
+// Functions that enable efficient handling of writes to PPU memory.
+void inline ppu_2006() {
+    VRAM_ADDR = (VRAM_ADDR << 8) | memory[0x2006];
+}
+
+void inline ppu_2007() {
+    ppu_mmap[VRAM_ADDR] = memory[0x2007];
+    if(memory[0x2000] & 0x04 == 0)
+        VRAM_ADDR++;
+    else
+        VRAM_ADDR += 32;
+}
+
+void inline write_acum(unsigned short addr, unsigned char *reg) {
+    memory[addr] = *reg;
+}
+void inline write_acum_2007(unsigned short addr, unsigned char *reg) {
+    write_acum(addr, reg);
+    ppu_2007();
+}
+void inline write_acum_2006(unsigned short addr, unsigned char *reg) {
+    prev_2006 = memory[0x2006];
+    write_acum(addr, reg);
+    ppu_2006();
+}
+void inline write_acum_4014(unsigned short addr, unsigned char *reg) {
+    write_acum(addr, reg);
+    dma_transfer();
+}
+
+static void inline rot_right(unsigned short addr) {
+    memory[addr] >>= 1;
+}
+static void inline rot_right_2006(unsigned short addr) {
+    rot_right(addr);
+    ppu_2006();
+}
+static void inline rot_right_2007(unsigned short addr) {
+    rot_right(addr);
+    ppu_2007();
+}
+static void inline rot_right_4014(unsigned short addr) {
+    rot_right(addr);
+    dma_transfer();
+}
+static void inline rot_left(unsigned short addr) {
+    memory[addr] <<= 1;
+}
+static void inline rot_left_2006(unsigned short addr) {
+    rot_left(addr);
+    ppu_2006();
+}
+static void inline rot_left_2007(unsigned short addr) {
+    rot_left(addr);
+    ppu_2007();
+}
+static void inline rot_left_4014(unsigned short addr) {
+    rot_left(addr);
+    dma_transfer();
+}
+static void inline inc_mem(unsigned short addr) {
+    memory[addr]++;
+}
+static void inline inc_mem_2006(unsigned short addr) {
+    inc_mem(addr);
+    ppu_2006();
+}
+static void inline inc_mem_2007(unsigned short addr) {
+    inc_mem(addr);
+    ppu_2007();
+}
+static void inline inc_mem_4014(unsigned short addr) {
+    inc_mem(addr);
+    dma_transfer();
+}
+static void inline dec_mem(unsigned short addr) {
+    memory[addr]--;
+}
+static void inline dec_mem_2006(unsigned short addr) {
+    dec_mem(addr);
+    ppu_2006();
+}
+static void inline dec_mem_2007(unsigned short addr) {
+    dec_mem(addr);
+    ppu_2007();
+}
+static void inline dec_mem_4014(unsigned short addr) {
+    dec_mem(addr);
+    dma_transfer();
+}
+
+
+void (*write[0xFFFF])(unsigned short addr, unsigned char *reg);
+void (*rr[0xFFFF])(unsigned short addr);
+void (*rl[0xFFFF])(unsigned short addr);
+void (*inc_m[0xFFFF])(unsigned short addr);
+void (*dec_m[0xFFFF])(unsigned short addr);
+
 unsigned int cycle;
 unsigned short opcode;
 unsigned short PC;
@@ -83,12 +214,12 @@ int main() {
 }
 
 int initialisation() {
-    initCartridge("../../resources/roms/donkey_kong.nes");
-    //initCartridge("../../resources/roms/nestest.nes");
+    //initCartridge("../../resources/roms/donkey_kong.nes");
+    initCartridge("../../resources/roms/nestest.nes");
     mapCPUMemory(memory);
     
-    //PC = 0xC000;    // for nestest (temporary)
-    PC = memory[0xFFFD] << 8 | memory[0xFFFC];  // reset vector
+    PC = 0xC000;    // for nestest (temporary)
+    //PC = memory[0xFFFD] << 8 | memory[0xFFFC];  // reset vector
     //printf("PC: %x\n", PC);
     S = 0xFD;
     A = X = Y = 0x0;
@@ -102,14 +233,61 @@ int initialisation() {
     cycle = 7;
     
     // Donkey Kong
-    memory[0x2002] = 0x80;
+    //memory[0x2002] = 0x80;
+    unsigned char prev_4014 = memory[0x4014];    // OAM DMA register previous value
+    unsigned char prev_2006 = memory[0x2006];
+    unsigned char prev_2007 = memory[0x2007];
+
+    VRAM_ADDR = 0x2000;
+
+    ppu_regs_ini();
+
+    for(int i = 0; i < 0xFFFF; i++) {
+        write[i] = write_acum;
+        rr[i] = rot_right;
+        rl[i] = rot_left;
+        inc_m[i] = inc_mem;
+        dec_m[i] = dec_mem;
+    }
+
+    write[0x2006] = write_acum_2006;
+    write[0x2007] = write_acum_2007;
+    write[0x4014] = write_acum_4014;
+    rr[0x2006] = rot_right_2006;
+    rr[0x2007] = rot_right_2007;
+    rr[0x4014] = rot_right_4014;
+    rl[0x2006] = rot_left_2006;
+    rl[0x2007] = rot_right_2007;
+    rl[0x4014] = rot_right_4014;
+    inc_m[0x2006] = inc_mem_2006;
+    inc_m[0x2007] = inc_mem_2007;
+    inc_m[0x4014] = inc_mem_4014;
+    dec_m[0x2006] = dec_mem_2006;
+    dec_m[0x2007] = dec_mem_2007;
+    dec_m[0x4014] = dec_mem_4014;
+
+
+    int bg_access_counter = 0;  // background data
+
+    break_flag = 0;
 
     while(execution) {
         if(fetched_in_adv == FALSE)
             fetch();
         fetched_in_adv = FALSE;
         decode();
+        // temporary
+        /* if(memory[0x2006] != prev_2006)
+            bg_access_counter++;
+        if(bg_access_counter == 50)
+            break; */
+        /* if(break_flag)
+            break; */
     }
+    /* for(int i = 0x2000; i < 0x23FF; i++)
+        printf("%X ", ppu_mmap[i]);
+    printf("\n");
+    initPPU(); */
     return 0;
 }
 
@@ -153,7 +331,16 @@ void inline set_read_flags(char * reg) {
 }
 
 void inline fetch() {
+    // First NMI interrupt in DK
+    /* if(cycle == 86968) {
+        cycle+=4;
+        PC = 0xC85F;
+        break_flag = 1;
+    } */
     opcode = memory[PC];
+    /* if(cycle == 27396)
+        memory[0x2002] = 0x80; */
+    
 #ifdef DEBUG_MODE
     printInstr();
 #endif
@@ -1220,7 +1407,7 @@ void inline nop() {
 // READ-MODIFY-WRITE
 
 void inline asl() {
-    unsigned char * dest;
+    unsigned short addr;
     
     switch(opcode) {
         case 0x02:
@@ -1228,18 +1415,28 @@ void inline asl() {
             return;
             break;
         case 0x0A:
-            dest = &A;
+            if(get_bit(7,&A) == 1)
+                set_bit(C,&P);
+            else
+                rst_bit(C,&P);
+            
+            A <<= 1;
+            cycle++;
+            set_read_flags(&A);
+            fetch();
+            fetched_in_adv = TRUE;
+            return;
             break;
         case 0x012:
             stp();
             return;
             break;
         case 0x06:
-            dest = &memory[zero_page()];
+            addr = zero_page();
             cycle++;
             break;
         case 0x16:
-            dest = &memory[zero_page_ind(TRUE)];
+            addr = zero_page_ind(TRUE);
             cycle++;
             break;
         case 0x1A:
@@ -1247,80 +1444,82 @@ void inline asl() {
             return;
             break;
         case 0x0E:
-            dest = &memory[abs_addr()];
+            addr = abs_addr();
             cycle++;
             break;
         case 0x1E:
-            dest = &memory[abs_ind_addr(TRUE)];
+            addr = abs_ind_addr(TRUE);
             cycle++;
             break;
     }
     
-    if(get_bit(7,dest) == 1)
+    if(get_bit(7,&memory[addr]) == 1)
         set_bit(C,&P);
     else
         rst_bit(C,&P);
     
-    *dest <<= 1;
+    (rl[addr])(addr);
     cycle++;
-    set_read_flags(dest);
+    set_read_flags(&memory[addr]);
     
-    if(opcode == 0x0A) {
-        fetch();
-        fetched_in_adv = TRUE;
-    }
-    else
-        cycle++;
+    cycle++;
 }
 
 void inline lsr() {
-    unsigned char * dest;
+    unsigned short addr;
     
     switch(opcode) {
         case 0x4A:
-            dest = &A;
+            if(get_bit(0,&A) == 1)
+                set_bit(C,&P);
+            else
+                rst_bit(C,&P);
+            A >>= 1;
+            cycle++;
+            set_read_flags(&A);
+
+            fetch();
+            fetched_in_adv = TRUE;
+            return;
             break;
         case 0x5A:
             nop();
             return;
             break;
         case 0x46:
-            dest = &memory[zero_page()];
+            addr = zero_page();
             cycle++;
             break;
         case 0x56:
-            dest = &memory[zero_page_ind(TRUE)];
+            addr = zero_page_ind(TRUE);
             cycle++;
             break;
         case 0x4E:
-            dest = &memory[abs_addr()];
+            addr = abs_addr();
             cycle++;
             break;
         case 0x5E:
-            dest = &memory[abs_ind_addr(TRUE)];
+            addr = abs_ind_addr(TRUE);
             cycle++;
             break;
     }
     
-    if(get_bit(0,dest) == 1)
+    if(get_bit(0,&memory[addr]) == 1)
         set_bit(C,&P);
     else
         rst_bit(C,&P);
     
-    *dest >>= 1;
+    (rr[addr])(addr);
     cycle++;
-    set_read_flags(dest);
+    set_read_flags(&memory[addr]);
 
-    if(opcode == 0x4A) {
-        fetch();
-        fetched_in_adv = TRUE;
-    }
-    else
-        cycle++;
+    cycle++;
 }
 
 void inline rol() {
     unsigned char * dest;
+    unsigned short addr;
+    unsigned char bit7;
     
     switch(opcode) {
         case 0x22:
@@ -1328,10 +1527,27 @@ void inline rol() {
             return;
             break;
         case 0x2A:
-            dest = &A;
+            bit7 = A & 0x80;
+            A <<= 1;
+            cycle++;
+            if(get_bit(C,&P) == 0)
+                rst_bit(0,&A);
+            else
+                set_bit(0,&A);
+            
+            set_read_flags(&A);
+
+            if(bit7 == 0)
+                rst_bit(C,&P);
+            else
+                set_bit(C,&P);
+            
+            fetch();
+            fetched_in_adv = TRUE;
+            return;
             break;
         case 0x26:
-            dest = &memory[zero_page()];
+            addr = zero_page();
             cycle++;
             break;
         case 0x32:
@@ -1339,7 +1555,7 @@ void inline rol() {
             return;
             break;
         case 0x36:
-            dest = &memory[zero_page_ind(TRUE)];
+            addr = zero_page_ind(TRUE);
             cycle++;
             break;
         case 0x3A:
@@ -1347,40 +1563,36 @@ void inline rol() {
             return;
             break;
         case 0x2E:
-            dest = &memory[abs_addr()];
+            addr = abs_addr();
             cycle++;
             break;
         case 0x3E:
-            dest = &memory[abs_ind_addr(TRUE)];
+            addr = abs_ind_addr(TRUE);
             cycle++;
             break;
     }
     
-    unsigned char bit7 = *dest & 0x80;
-    *dest <<= 1;
+    bit7 = memory[addr] & 0x80;
+    (rl[addr])(addr);
     cycle++;
     if(get_bit(C,&P) == 0)
-        rst_bit(0,dest);
+        rst_bit(0,&memory[addr]);
     else
-        set_bit(0,dest);
+        set_bit(0,&memory[addr]);
     
-    set_read_flags(dest);
+    set_read_flags(&memory[addr]);
 
     if(bit7 == 0)
         rst_bit(C,&P);
     else
         set_bit(C,&P);
     
-    if(opcode == 0x2A) {
-        fetch();
-        fetched_in_adv = TRUE;
-    }
-    else
-        cycle++;
+    cycle++;
 }
 
 void inline ror() {
-    unsigned char * dest;
+    unsigned short addr;
+    unsigned char old_bit0;
     
     switch(opcode) {
         case 0x62:
@@ -1388,22 +1600,40 @@ void inline ror() {
             return;
             break;
         case 0x6A:
-            dest = &A;
+            old_bit0 = A & 0x1;
+            A >>= 1;
+            cycle++;
+            
+            if(get_bit(C,&P) == 0)
+                rst_bit(7,&A);
+            else
+                set_bit(7,&A);
+            
+            if(old_bit0 == 1)
+                set_bit(C,&P);
+            else
+                rst_bit(C,&P);
+            
+            set_read_flags(&A);
+            
+            fetch();
+            fetched_in_adv = TRUE;
+            return;
             break;
         case 0x72:
             stp();
             return;
             break;
         case 0x66:
-            dest = &memory[zero_page()];
+            addr = zero_page();
             cycle++;
             break;
         case 0x76:
-            dest = &memory[zero_page_ind(TRUE)];
+            addr = zero_page_ind(TRUE);
             cycle++;
             break;
         case 0x6E:
-            dest = &memory[abs_addr()];
+            addr = abs_addr();
             cycle++;
             break;
         case 0x7A:
@@ -1411,44 +1641,39 @@ void inline ror() {
             return;
             break;
         case 0x7E:
-            dest = &memory[abs_ind_addr(TRUE)];
+            addr = abs_ind_addr(TRUE);
             cycle++;
             break;
     }
     
-    unsigned char old_bit0 = *dest & 0x1;
-    *dest >>= 1;
+    old_bit0 = memory[addr] & 0x1;
+    (rr[addr])(addr);
     cycle++;
     
     if(get_bit(C,&P) == 0)
-        rst_bit(7,dest);
+        rst_bit(7,&memory[addr]);
     else
-        set_bit(7,dest);
+        set_bit(7,&memory[addr]);
     
     if(old_bit0 == 1)
         set_bit(C,&P);
     else
         rst_bit(C,&P);
     
-    set_read_flags(dest);
+    set_read_flags(&memory[addr]);
     
-    if(opcode == 0x6A) {
-        fetch();
-        fetched_in_adv = TRUE;
-    }
-    else
-        cycle++;
+    cycle++;
 }
 
 void inline inc() {
-    unsigned char * dest;
+    unsigned short addr;
     switch(opcode) {
         case 0xE2:
             nop();
             return;
             break;
         case 0xE6:
-            dest = &memory[zero_page()];
+            addr = zero_page();
             break;
         case 0xEA:
             nop();
@@ -1459,51 +1684,57 @@ void inline inc() {
             return;
             break;
         case 0xF6:
-            dest = &memory[zero_page_ind(TRUE)];
+            addr = zero_page_ind(TRUE);
             break;
         case 0xFA:
             nop();
             return;
             break;
         case 0xEE:
-            dest = &memory[abs_addr()];
+            addr = abs_addr();
             break;
         case 0xFE:
-            dest = &memory[abs_ind_addr(TRUE)];
+            addr = abs_ind_addr(TRUE);
             break;
     }
     cycle++;
-    (*dest)++;
+    (inc_m[addr])(addr);
     cycle++;
-    set_read_flags(dest);
+    set_read_flags(&memory[addr]);
     fetched_in_adv = FALSE;
     cycle++;
 }
 
 void inline dec() {
-    unsigned char * dest;
+    unsigned short addr;
     switch(opcode) {
         case 0xC2:
             nop();
             return;
             break;
         case 0xC6:
-            dest = &memory[zero_page()];
+            addr = zero_page();
             cycle++;
             break;
         case 0xCA:
-            dest = &X;
+            X--;
+            cycle++;
+            
+            set_read_flags(&X);
+            fetch();
+            fetched_in_adv = TRUE;
+            return;
             break;
         case 0xD2:
             stp();
             return;
             break;
         case 0xD6:
-            dest = &memory[zero_page_ind(TRUE)];
+            addr = zero_page_ind(TRUE);
             cycle++;
             break;
         case 0xCE:
-            dest = &memory[abs_addr()];
+            addr = abs_addr();
             cycle++;
             break;
         case 0xDA:
@@ -1511,52 +1742,54 @@ void inline dec() {
             return;
             break;
         case 0xDE:
-            dest = &memory[abs_ind_addr(TRUE)];
+            addr = abs_ind_addr(TRUE);
             cycle++;
             break;
     }
-    (*dest)--;
+    (dec_m[addr])(addr);
     cycle++;
     
-    set_read_flags(dest);
-    if(opcode == 0xCA) {
-        fetch();
-        fetched_in_adv = TRUE;
-    }
-    else {
-        fetched_in_adv = FALSE;
-        cycle++;
-    }
+    set_read_flags(&memory[addr]);
+    fetched_in_adv = FALSE;
+    cycle++;
 }
 
 // WRITE
 
 void inline sta() {
+    unsigned short addr;
     switch(opcode) {
         case 0x85:
-            memory[zero_page()] = A;
+            addr = zero_page();
+            (*write[addr])(addr, &A);
             break;
         case 0x89:
             nop();
             return;
             break;
         case 0x95:
-            memory[zero_page_ind(TRUE)] = A;
+            addr = zero_page_ind(TRUE);
+            (*write[addr])(addr, &A);
             break;
         case 0x8D:
-            memory[abs_addr()] = A;
+            addr = abs_addr();
+            (*write[addr])(addr, &A);
             break;
         case 0x9D:
-            memory[abs_ind_addr(TRUE)] = A;
+            addr = abs_ind_addr(TRUE);
+            (*write[addr])(addr, &A);
             break;
         case 0x99:
-            memory[abs_ind_addr(FALSE)] = A;
+            addr = abs_ind_addr(FALSE);
+            (*write[addr])(addr, &A);
             break;
         case 0x81:
-            memory[index_indir()] = A;
+            addr = index_indir();
+            (*write[addr])(addr, &A);
             break;
         case 0x91:
-            memory[indir_index()] = A;
+            addr = indir_index();
+            (*write[addr])(addr, &A);
             break;
     }
     cycle++;
@@ -1571,7 +1804,8 @@ void inline stx() {
             return;
             break;
         case 0x86:
-            memory[zero_page()] = X;
+            addr = zero_page();
+            (*write[addr])(addr, &X);
             cycle++;
             break;
         case 0x8A:
@@ -1587,7 +1821,8 @@ void inline stx() {
             return;
             break;
         case 0x96:
-            memory[zero_page_ind(FALSE)] = X;
+            addr = zero_page_ind(FALSE);
+            (write[addr])(addr, &X);
             cycle++;
             break;
         case 0x9A:
@@ -1598,12 +1833,14 @@ void inline stx() {
             return;
             break;
         case 0x8E:
-            memory[abs_addr(FALSE)] = X;
+            addr = abs_addr(FALSE);
+            (write[addr])(addr, &X);
             cycle++;
             break;
         case 0x9E:
             addr = abs_addr();
-            memory[addr] = X & (addr >> 8) + 1;
+            unsigned char stored = X & (addr >> 8) + 1;
+            (write[addr])(addr, &stored);
             cycle++;
             return;
             break;
@@ -1620,7 +1857,8 @@ void inline sty() {
             return;
             break;
         case 0x84:
-            memory[zero_page()] = Y;
+            addr = zero_page();
+            (write[addr])(addr, &Y);
             cycle++;
             break;
         case 0x88:
@@ -1632,7 +1870,8 @@ void inline sty() {
             return;
             break;
         case 0x8C:
-            memory[abs_addr()] = Y;
+            addr = abs_addr();
+            (write[addr])(addr, &Y);
             cycle++;
             break;
         case 0x90:
@@ -1640,7 +1879,8 @@ void inline sty() {
             return;
             break;
         case 0x94:
-            memory[zero_page_ind(TRUE)] = Y;
+            addr = zero_page_ind(TRUE);
+            (write[addr])(addr, &Y);
             cycle++;
             break;
         case 0x98:
@@ -1653,7 +1893,8 @@ void inline sty() {
             break;
         case 0x9C:
             addr = abs_ind_addr(FALSE);
-            memory[addr] = Y & (addr >> 8) + 1;
+            unsigned char stored = Y & (addr >> 8) + 1;
+            (write[addr])(addr, &stored);
             cycle++;
             break;
     }
@@ -1663,9 +1904,10 @@ void inline sty() {
 
 void inline slo() {
     unsigned char * dest;
+    unsigned short addr;
     switch(opcode) {
         case 0x07:
-            dest = &memory[zero_page()];
+            addr = zero_page();
             cycle++;
             break;
         case 0x0B:
@@ -1673,40 +1915,40 @@ void inline slo() {
             return;
             break;
         case 0x17:
-            dest = &memory[zero_page_ind(TRUE)];
+            addr = zero_page_ind(TRUE);
             cycle++;
             break;
         case 0x0F:
-            dest = &memory[abs_addr()];
+            addr = abs_addr();
             cycle++;
             break;
         case 0x1F:
-            dest = &memory[abs_ind_addr(TRUE)];
+            addr = abs_ind_addr(TRUE);
             cycle++;
             break;
         case 0x1B:
-            dest = &memory[abs_ind_addr(FALSE)];
+            addr = abs_ind_addr(FALSE);
             cycle++;
             break;
         case 0x03:
-            dest = &memory[index_indir()];
+            addr = index_indir();
             cycle++;
             break;
         case 0x13:
-            dest = &memory[indir_index()];
+            addr = indir_index();
             cycle++;
             break;
     }
     cycle++;
-    if(get_bit(7,dest) == 1)
+    if(get_bit(7,&memory[addr]) == 1)
         set_bit(C,&P);
     else
         rst_bit(C,&P);
     
-    *dest <<= 1;
+    (rl[addr])(addr);
     cycle++;
     
-    A |= *dest;
+    A |= memory[addr];
     set_read_flags(&A);
     fetch();
     fetched_in_adv = TRUE;
@@ -1731,52 +1973,53 @@ void anc() {
 
 void inline rla() {
     unsigned char * dest;
+    unsigned short addr;
     switch(opcode) {
         case 0x27:
-            dest = &memory[zero_page()];
+            addr = zero_page();
             break;
         case 0x2B:
             anc();
             return;
             break;
         case 0x37:
-            dest = &memory[zero_page_ind(TRUE)];
+            addr = zero_page_ind(TRUE);
             break;
         case 0x2F:
-            dest = &memory[abs_addr()];
+            addr = abs_addr();
             break;
         case 0x3F:
-            dest = &memory[abs_ind_addr(TRUE)];
+            addr = abs_ind_addr(TRUE);
             break;
         case 0x3B:
-            dest = &memory[abs_ind_addr(FALSE)];
+            addr = abs_ind_addr(FALSE);
             break;
         case 0x23:
-            dest = &memory[index_indir()];
+            addr = index_indir();
             break;
         case 0x33:
-            dest = &memory[indir_index()];
+            addr = indir_index();
             break;
     }
     cycle++;
     
-    unsigned char val = *dest;
-    unsigned char bit7 = *dest & 0x80;
-    *dest <<= 1;
+    unsigned char val = memory[addr];
+    unsigned char bit7 = memory[addr] & 0x80;
+    (rl[addr])(addr);
     cycle++;
     if(get_bit(C,&P) == 0)
-        rst_bit(0,dest);
+        rst_bit(0,&memory[addr]);
     else
-        set_bit(0,dest);
+        set_bit(0,&memory[addr]);
     
-    set_read_flags(dest);
+    set_read_flags(&memory[addr]);
     
     if(bit7 == 0)
         rst_bit(C,&P);
     else
         set_bit(C,&P);
     cycle++;
-    A &= *dest;
+    A &= memory[addr];
     set_read_flags(&A);
     fetch();
     fetched_in_adv = TRUE;
@@ -1784,18 +2027,19 @@ void inline rla() {
 
 void sre() {
     unsigned char * dest;
+    unsigned short addr;
     switch(opcode) {
         case 0x47:
-            dest = &memory[zero_page()];
+            addr = zero_page();
             break;
         case 0x57:
-            dest = &memory[zero_page_ind(TRUE)];
+            addr = zero_page_ind(TRUE);
             break;
         case 0x4F:
-            dest = &memory[abs_addr()];
+            addr = abs_addr();
             break;
         case 0x5F:
-            dest = &memory[abs_ind_addr(TRUE)];
+            addr = abs_ind_addr(TRUE);
             break;
         case 0x4B:
             A |= imm_addr();
@@ -1811,25 +2055,25 @@ void sre() {
             return;
             break;            
         case 0x5B:
-            dest = &memory[abs_ind_addr(FALSE)];
+            addr = abs_ind_addr(TRUE);
             break;
         case 0x43:
-            dest = &memory[index_indir()];
+            addr = index_indir();
             break;
         case 0x53:
-            dest = &memory[indir_index()];
+            addr = indir_index();
             break;
     }
     cycle++;
     
-    if(get_bit(0,dest) == 0)
+    if(get_bit(0,&memory[addr]) == 0)
         rst_bit(C,&P);
     else
         set_bit(C,&P);
     cycle++;
-    *dest >>= 1;
+    (rr[addr])(addr);
     cycle++;
-    A ^= *dest;
+    A ^= memory[addr];
     set_read_flags(&A);
     fetch();
     fetched_in_adv = TRUE;
@@ -1837,39 +2081,40 @@ void sre() {
 
 void rra() {
     unsigned char * dest;
+    unsigned short addr;
     switch(opcode) {
         case 0x67:
-            dest = &memory[zero_page()];
+            addr = zero_page();
             break;
         case 0x77:
-            dest = &memory[zero_page_ind(TRUE)];
+            addr = zero_page_ind(TRUE);
             break;
         case 0x6F:
-            dest = &memory[abs_addr()];
+            addr = abs_addr();
             break;
         case 0x7F:
-            dest = &memory[abs_ind_addr(TRUE)];
+            addr = abs_ind_addr(TRUE);
             break;
         case 0x7B:
-            dest = &memory[abs_ind_addr(FALSE)];
+            addr = abs_ind_addr(TRUE);
             break;
         case 0x63:
-            dest = &memory[index_indir()];
+            addr = index_indir();
             break;
         case 0x73:
-            dest = &memory[indir_index()];
+            addr = indir_index();
             break;
     }
     cycle++;
     
-    unsigned char val = *dest;
-    unsigned char old_bit0 = *dest & 0x1;
-    *dest >>= 1;
+    unsigned char val = memory[addr];
+    unsigned char old_bit0 = memory[addr] & 0x1;
+    (rr[addr])(addr);
     cycle++;
     if(get_bit(C,&P) == 0)
-        rst_bit(7,dest);
+        rst_bit(7,&memory[addr]);
     else
-        set_bit(7,dest);
+        set_bit(7,&memory[addr]);
     if(old_bit0 == 0)
         rst_bit(C,&P);
     else
@@ -1879,14 +2124,14 @@ void rra() {
     
     unsigned char A_old = A;
     unsigned char old_C = get_bit(C,&P);
-    A += old_C + *dest;
+    A += old_C + memory[addr];
     
-    if(0xFF - A_old < *dest + old_C)
+    if(0xFF - A_old < memory[addr] + old_C)
         set_bit(C,&P);
     else
         rst_bit(C,&P);
     
-    if((A_old ^ A) & (*dest ^ A) & 0x80)
+    if((A_old ^ A) & (memory[addr] ^ A) & 0x80)
         set_bit(V,&P);
     else
         rst_bit(V,&P);
@@ -1900,6 +2145,7 @@ void rra() {
 void sax() {
     unsigned char * dest;
     unsigned short addr;
+    unsigned char stored;
     switch(opcode) {
         case 0x8B:
             A = X;
@@ -1907,46 +2153,49 @@ void sax() {
             A &= imm_addr();
             fetch();
             fetched_in_adv = TRUE;
-            break;
             return;
+            break;
         case 0x87:
-            dest = &memory[zero_page()];
+            addr = zero_page();
             break;
         case 0x97:
-            dest = &memory[zero_page_ind(FALSE)];
+            addr = zero_page_ind(FALSE);
             break;
         case 0x83:
-            dest = &memory[index_indir()];
+            addr = index_indir();
             break;
         case 0x93:
             addr = indir_index();
-            memory[addr] = A & X & (addr >> 4);
+            stored = A & X & (addr >> 4);
+            (write[addr])(addr, &stored);
             cycle++;
-            break;
             return;
+            break;
         case 0x8F:
-            dest = &memory[abs_addr()];
+            addr = abs_addr();
             break;
         case 0x9B:
             S = A & X;
             addr = abs_ind_addr(FALSE);
-            memory[addr] = S & (addr >> 4) + 1;
+            stored = S & (addr >> 4) + 1;
+            (write[addr])(addr, &stored);
             cycle++;
-            break;
             return;
+            break;
         case 0x9F:
             addr = abs_ind_addr(FALSE);
-            memory[addr] = A & X & (addr >> 4);
+            stored = A & X & (addr >> 4);
+            (write[addr])(addr, &stored);
             cycle++;
-            break;
             return;
+            break;
         case 0xDB:
-            dest = &memory[imm_addr()];
+            addr = imm_addr();
             break;
     }
     
-    unsigned char val = A & X;
-    *dest = val;
+    stored = A & X;
+    (write[addr])(addr, &stored);
     fetched_in_adv = FALSE;
     cycle++;
 }
@@ -1996,21 +2245,22 @@ void lax() {
 
 void dcp() {
     unsigned char * dest;
+    unsigned short addr;
     switch(opcode) {
         case 0xC7:
-            dest = &memory[zero_page()];
+            addr = zero_page();
             cycle++;
             break;
         case 0xD7:
-            dest = &memory[zero_page_ind(TRUE)];
+            addr = zero_page_ind(TRUE);
             cycle++;
             break;
         case 0xCF:
-            dest = &memory[abs_addr()];
+            addr = abs_addr();
             cycle++;
             break;
         case 0xDF:
-            dest = &memory[abs_ind_addr(TRUE)];
+            addr = abs_ind_addr(TRUE);
             cycle++;
             break;
         case 0xCB:
@@ -2018,23 +2268,23 @@ void dcp() {
             return;
             break;
         case 0xDB:
-            dest = &memory[abs_ind_addr(FALSE)];
+            addr = abs_ind_addr(FALSE);
             cycle++;
             break;
         case 0xC3:
-            dest = &memory[index_indir()];
+            addr = index_indir();
             cycle++;
             break;
         case 0xD3:
-            dest = &memory[indir_index()];
+            addr = indir_index();
             cycle++;
             break;
     }
     cycle++;
-    (*dest)--;
+    (dec_m[addr])(addr);
     cycle++;
-    char check = A - *dest;  
-    if(*dest <= A)
+    char check = A - memory[addr];  
+    if(memory[addr] <= A)
         set_bit(C,&P);
     else
         rst_bit(C,&P);
@@ -2047,42 +2297,43 @@ void dcp() {
 
 void isc() {
     unsigned char * dest;
+    unsigned short addr;
     switch(opcode) {
         case 0xE7:
-            dest = &memory[zero_page()];
+            addr = zero_page();
             break;
         case 0xF7:
-            dest = &memory[zero_page_ind(TRUE)];
+            addr = zero_page_ind(TRUE);
             break;
         case 0xEF:
-            dest = &memory[abs_addr()];
+            addr = abs_addr();
             break;
         case 0xFF:
-            dest = &memory[abs_ind_addr(TRUE)];
+            addr = abs_ind_addr(TRUE);
             break;
         case 0xEB:
             sbc();
             return;
             break;
         case 0xFB:
-            dest = &memory[abs_ind_addr(FALSE)];
+            addr = abs_ind_addr(FALSE);
             break;
         case 0xE3:
-            dest = &memory[index_indir()];
+            addr = index_indir();
             break;
         case 0xF3:
-            dest = &memory[indir_index()];
+            addr = indir_index();
             break;
     }
     
     cycle++;
     cycle++;
-    (*dest)++;
+    (inc_m[addr])(addr);
     cycle++;
     
     unsigned char A_old = A;
     unsigned char old_C = get_bit(C,&P);
-    unsigned char comp_val = *dest ^ 0xFF;
+    unsigned char comp_val = memory[addr] ^ 0xFF;
     A += old_C + comp_val;
     
     if(0xFF - A_old < comp_val + old_C)
